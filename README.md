@@ -195,7 +195,7 @@ rtsp://localhost:8554/dock1_stream
 
 ---
 
-# Telemetry Topic
+# Telemetry _(Currently Unimplemented)_
 
 Telemetry is published via MQTT on:
 
@@ -216,7 +216,7 @@ Example telemetry message:
 
 ---
 
-# Commands Topic
+# Commands _(Currently Unimplemented)_
 
 Commands are received on:
 
@@ -240,4 +240,5 @@ Example command:
 - The implementation demonstrates the core architecture used in dock-controlled drone systems.
 - Demo latency will depend on local network conditions and RTSP client buffering.
 
----# DroneLiveStreamDemo
+---
+# DroneLiveStreamDemo
