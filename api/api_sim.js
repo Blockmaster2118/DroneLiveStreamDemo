@@ -35,6 +35,26 @@ app.post("/livestream/stop", (req,res)=>{
 
 })
 
+app.post("/audio/start", (req, res) => {
+  client.publish(
+    "dock/dock1/commands",
+    JSON.stringify({ action: "start_audio" })
+  )
+
+  res.json({
+    stream_url: "rtsp://localhost:8554/dock1_audio"
+  })
+})
+
+app.post("/audio/stop", (req, res) => {
+  client.publish(
+    "dock/dock1/commands",
+    JSON.stringify({ action: "stop_audio" })
+  )
+
+  res.json({ status: "stopped" })
+})
+
 app.listen(3000, () => {
  console.log("API simulator running on port 3000")
 })

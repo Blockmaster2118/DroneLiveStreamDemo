@@ -11,14 +11,15 @@ ffmpeg_path = os.path.join(PROJECT_ROOT, "bin", "ffmpeg.exe")
 video_path  = os.path.join(PROJECT_ROOT, "media", "drone_test.mp4")
 
 stream_process = None
+audio_process = None
 
 def on_message(client, userdata, msg):
-    global stream_process
+    global stream_process, audio_process
 
     command = json.loads(msg.payload)
 
+    # VIDEO
     if command["action"] == "start_stream":
-        
         stream_process = subprocess.Popen([
             ffmpeg_path,
             "-re",
@@ -27,13 +28,35 @@ def on_message(client, userdata, msg):
             "-c:v", "copy",
             "-an",
             "-f", "rtsp",
-            "-rtsp_transport", "tcp",
+            "-rtsp_transport", "udp",
             "rtsp://localhost:8554/dock1_stream"
         ])
 
-    if command["action"] == "stop_stream":
+    elif command["action"] == "stop_stream":
         if stream_process:
-            stream_process.kill()
+            stream_process.terminate()
+            stream_process.wait()
+            stream_process = None
+
+    # AUDIO
+    elif command["action"] == "start_audio":
+        audio_process = subprocess.Popen([
+            ffmpeg_path,
+            "-re",
+            "-stream_loop", "-1",
+            "-i", os.path.join(PROJECT_ROOT, "media", "radio_test.mp3"),
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-f", "rtsp",
+            "-rtsp_transport", "udp",
+            "rtsp://localhost:8554/dock1_audio"
+        ])
+
+    elif command["action"] == "stop_audio":
+        if audio_process:
+            audio_process.terminate()
+            audio_process.wait()
+            audio_process = None
 
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
