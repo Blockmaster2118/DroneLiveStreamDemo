@@ -12,18 +12,18 @@ The architecture loosely mirrors the behaviour of systems controlled through the
 
 ```
 Client/API Request
-        ↓
+↓
 Node.js API Server
-        ↓
+↓
 MQTT Command
-        ↓
+↓
 Dock Simulator (Python)
 ↓
 ├── FFmpeg Video Stream
 ├── FFmpeg Audio Stream
 ↓
 MediaMTX RTSP Server
-        ↓
+↓
 RTSP Viewer (VLC etc.)
 ```
 
