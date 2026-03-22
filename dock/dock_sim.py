@@ -5,7 +5,6 @@ import time
 import os
 import math
 
-# get project root (assuming this file is /dock/dock_sim.py)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 ffmpeg_path = os.path.join(PROJECT_ROOT, "bin", "ffmpeg.exe")
@@ -46,22 +45,20 @@ client.subscribe("dock/dock1/commands")
 
 client.loop_start()
 
-import math
-import time
-
 t = 0
 
 while True:
     lat = -33.86 + 0.001 * math.sin(t)
     lon = 151.20 + 0.001 * math.cos(t)
     altitude = 60 + 5 * math.sin(t / 2)
-    battery = 100 - (t * 0.2)
+    
+    battery = 100 - ((t * 0.2) % 100)
 
     telemetry = {
         "lat": round(lat, 6),
         "lon": round(lon, 6),
         "altitude": round(altitude, 2),
-        "battery": round(max(battery, 0), 2)
+        "battery": round(battery, 2)
     }
 
     client.publish(
@@ -70,4 +67,4 @@ while True:
     )
 
     t += 0.1
-    time.sleep(1)
+    time.sleep(0.1)

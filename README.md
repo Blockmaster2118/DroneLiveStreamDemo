@@ -195,12 +195,18 @@ rtsp://localhost:8554/dock1_stream
 
 ---
 
-# Telemetry _(Currently Unimplemented)_
+# Telemetry 
 
 Telemetry is published via MQTT on:
 
 ```
 dock/dock1/drone/telemetry
+```
+
+Use display/telemetry_viewer.py for easier visual:
+
+```
+python telemetry_viewer.py
 ```
 
 Example telemetry message:
@@ -213,6 +219,7 @@ Example telemetry message:
   "battery": 85
 }
 ```
+Telemetry is pushed every _100ms_ 
 
 ---
 
