@@ -49,6 +49,7 @@ The dock simulator publishes telemetry data and listens for commands to start or
 - `/dock/` → Python dock simulator
 - `/media/` → Sample video files
 - `/bin/` → FFmpeg and MediaMTX binaries
+- `/display/` → Scripts to easily display streamed data
 
 # Dependencies
 
