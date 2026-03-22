@@ -18,9 +18,10 @@ Node.js API Server
 MQTT Command
         ↓
 Dock Simulator (Python)
-        ↓
-FFmpeg Video Stream
-        ↓
+↓
+├── FFmpeg Video Stream
+├── FFmpeg Audio Stream
+↓
 MediaMTX RTSP Server
         ↓
 RTSP Viewer (VLC etc.)
@@ -35,11 +36,13 @@ The dock simulator publishes telemetry data and listens for commands to start or
 
 | File | Description |
 |-----|-------------|
-| `api_sim.js` | Simulated API server that sends commands to the dock |
+| `api_sim.js` | Simulated API server that sends commands via MQTT |
 | `dock_sim.py` | Simulated dock that publishes telemetry and launches FFmpeg |
 | `drone_test.mp4` | Sample drone video used for the livestream |
-| `mediamtx.exe` | RTSP server used to distribute the stream |
-| `ffmpeg.exe` | Used to push the simulated video stream |
+| `radio_test.mp3` | Sample audio used for simulated radio feed |
+| `mediamtx.exe` | RTSP server used to distribute streams |
+| `ffmpeg.exe` | Used to push video/audio streams |
+| `telemetry_viewer.py` | CLI dashboard for real-time telemetry |
 
 ---
 
@@ -49,7 +52,7 @@ The dock simulator publishes telemetry data and listens for commands to start or
 - `/dock/` → Python dock simulator
 - `/media/` → Sample video files
 - `/bin/` → FFmpeg and MediaMTX binaries
-- `/display/` → Scripts to easily display streamed data
+- `/display/` → Telemetry viewer and tools
 
 # Dependencies
 
@@ -184,14 +187,24 @@ curl -X POST http://localhost:3000/livestream/start
 
 The API will trigger the dock simulator to start streaming.
 
+Use _audio/_ for radio feed.
+
 ---
 
 # Viewing the Stream
 
 Open the stream in VLC or another RTSP client:
 
+## Video Stream
+
 ```
 rtsp://localhost:8554/dock1_stream
+```
+
+## Audio Stream
+
+```
+rtsp://localhost:8554/dock1_audio
 ```
 
 ---
@@ -220,7 +233,7 @@ Example telemetry message:
   "battery": 85
 }
 ```
-Telemetry is pushed every _100ms_ 
+Update rate: _~100ms (10Hz)_
 
 ---
 
