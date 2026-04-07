@@ -2,7 +2,7 @@ import paho.mqtt.client as mqtt
 import json
 import sys
 
-LINES = 4
+LINES = 9
 
 def on_message(client, userdata, msg):
     data = json.loads(msg.payload)
@@ -14,6 +14,11 @@ def on_message(client, userdata, msg):
         f"Lon: {data['lon']}\n"
         f"Alt: {data['altitude']} m\n"
         f"Battery: {data['battery']}%\n"
+        f"Heading: {data['heading']}\n"
+        f"Speed: {data['speed_mps']} m/s\n"
+        f"Battery Min Remaining: {data['battery_min']} min\n"
+        f"Wind Speed: {data['wind_speed_mps']} m/s\n"
+        f"Wind Direction: {data['wind_direction_deg']}\n"
     )
 
     sys.stdout.write(output)
