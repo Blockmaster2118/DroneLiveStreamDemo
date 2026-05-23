@@ -4,158 +4,554 @@ import json
 import time
 import os
 import math
-import random
+import threading
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-ffmpeg_path = os.path.join(PROJECT_ROOT, "bin", "ffmpeg.exe")
+_local_ffmpeg = os.path.join(PROJECT_ROOT, "bin", "ffmpeg")
+ffmpeg_path = _local_ffmpeg if os.path.isfile(_local_ffmpeg) else "ffmpeg"
 video_path  = os.path.join(PROJECT_ROOT, "media", "drone_test.mp4")
 
 stream_process = None
-audio_process = None
+audio_process  = None
+
+DOCK_LAT = -33.560
+DOCK_LON = 148.955
+
+CLIMB_RATE     = 2.0
+DESCENT_RATE   = 1.5
+CRUISE_SPEED   = 8.0
+YAW_RATE       = 45.0
+ACCEL_RATE     = 1.5
+DECEL_RATE     = 2.5
+MANUAL_SPEED   = 3.0
+ARRIVAL_THRESH = 1.0
+YAW_THRESH     = 0.3
+STOP_THRESH    = 0.05
+BATTERY_DRAIN  = 100.0 / (40.0 * 60)
+BATTERY_CHARGE = 100.0 / (18.0 * 60)
+
+TICK = 0.025
+PUBLISH_EVERY = 2
+
+state_lock = threading.Lock()
+
+state = {
+    "lat":          DOCK_LAT,
+    "lon":          DOCK_LON,
+    "altitude":     0.0,
+    "heading":      0.0,
+    "speed_mps":    0.0,
+    "vertical_speed": 0.0,
+    "pitch":        0.0,
+    "roll":         0.0,
+    "battery":      100.0,
+    "battery_min":  18.0,
+    "wind_speed_mps":    3.5,
+    "wind_direction_deg": 170.0,
+    "wind_t":       0.0,
+    "elapsed_seconds": 0.0,
+
+    "phase":           "idle",
+    "active_bearing":  0.0,
+    "active_speed":        8.0,
+    "active_manual_speed":  3.0,
+    "active_rth_speed":     8.0,
+    "active_decel":    2.5,
+    "target_lat":      DOCK_LAT,
+    "target_lon":      DOCK_LON,
+    "target_altitude": 0.0,
+    "target_heading":  0.0,
+
+    "manual_north_remain": 0.0,
+    "manual_east_remain":  0.0,
+    "manual_up_remain":    0.0,
+
+    "_pending":   None,
+    "_cancelled":            False,
+    "_pending_node_arrived": False,
+}
+
+def geo_bearing(from_lat, from_lon, to_lat, to_lon):
+    lat1 = math.radians(from_lat)
+    lat2 = math.radians(to_lat)
+    dlon = math.radians(to_lon - from_lon)
+    x = math.sin(dlon) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+def distance_m(lat1, lon1, lat2, lon2):
+    mp_lat = 111_320.0
+    mp_lon = 111_320.0 * math.cos(math.radians(lat1))
+    dn = (lat2 - lat1) * mp_lat
+    de = (lon2 - lon1) * mp_lon
+    return math.sqrt(dn * dn + de * de)
+
+def move_by_metres(lat, lon, north_m, east_m):
+    new_lat = lat + north_m / 111_320.0
+    lon_scale = 111_320.0 * math.cos(math.radians(lat))
+    new_lon = lon + (east_m / lon_scale if lon_scale != 0 else 0)
+    return new_lat, new_lon
+
+def shortest_delta(current, target):
+    d = (target - current + 360) % 360
+    return d - 360 if d > 180 else d
+
+def yaw_step(current, target, dt):
+    delta = shortest_delta(current, target)
+    if abs(delta) <= YAW_THRESH:
+        return target
+    step = math.copysign(min(abs(delta), YAW_RATE * dt), delta)
+    return (current + step) % 360
+
+def step_toward(current, target, max_step):
+    delta = target - current
+    if abs(delta) <= max_step:
+        return target
+    return current + math.copysign(max_step, delta)
 
 def on_message(client, userdata, msg):
     global stream_process, audio_process
 
-    command = json.loads(msg.payload)
+    try:
+        payload = json.loads(msg.payload)
+    except Exception:
+        return
 
-    if command["action"] == "start_stream":
-        stream_process = subprocess.Popen([
-            ffmpeg_path,
-            "-re",
-            "-stream_loop", "-1",
-            "-i", video_path,
-            "-c:v", "copy",
-            "-an",
-            "-f", "rtsp",
-            "-rtsp_transport", "udp",
-            "rtsp://localhost:8554/dock1_stream"
-        ])
+    topic = msg.topic
 
-    elif command["action"] == "stop_stream":
-        if stream_process:
-            stream_process.terminate()
-            stream_process.wait()
-            stream_process = None
+    if topic == "dock/dock1/commands":
+        action = payload.get("action", "")
 
-    elif command["action"] == "start_audio":
-        audio_process = subprocess.Popen([
-            ffmpeg_path,
-            "-re",
-            "-stream_loop", "-1",
-            "-i", os.path.join(PROJECT_ROOT, "media", "radio_test.mp3"),
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-f", "rtsp",
-            "-rtsp_transport", "udp",
-            "rtsp://localhost:8554/dock1_audio"
-        ])
+        if action == "start_stream":
+            stream_process = subprocess.Popen([
+                ffmpeg_path,
+                "-re", "-stream_loop", "-1", "-i", video_path,
+                "-c:v", "libx264", "-preset", "veryfast",
+                "-tune", "zerolatency",
+                "-x264-params", "keyint=60:min-keyint=60:scenecut=0",
+                "-b:v", "4000k", "-an",
+                "-f", "rtsp", "-rtsp_transport", "tcp",
+                "rtsp://localhost:8554/dock1_stream"
+            ])
+            time.sleep(1.5)
+            client.publish(
+                "dock/dock1/stream_status",
+                json.dumps({"status": "streaming",
+                            "stream_url": "http://localhost:8888/dock1_stream/index.m3u8"}),
+                retain=True
+            )
 
-    elif command["action"] == "stop_audio":
-        if audio_process:
-            audio_process.terminate()
-            audio_process.wait()
-            audio_process = None
+        elif action == "stop_stream":
+            if stream_process:
+                stream_process.terminate(); stream_process.wait()
+                stream_process = None
+            client.publish("dock/dock1/stream_status",
+                           json.dumps({"status": "stopped", "stream_url": None}), retain=True)
 
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-client.on_message = on_message
-client.connect("localhost", 1883)
-client.subscribe("dock/dock1/commands")
-client.loop_start()
+        elif action == "start_audio":
+            audio_process = subprocess.Popen([
+                ffmpeg_path, "-re", "-stream_loop", "-1",
+                "-i", os.path.join(PROJECT_ROOT, "media", "radio_test.mp3"),
+                "-c:a", "aac", "-b:a", "128k",
+                "-f", "rtsp", "-rtsp_transport", "udp",
+                "rtsp://localhost:8554/dock1_audio"
+            ])
 
-START_LAT = -32.895083
-START_LON = 146.080528
+        elif action == "stop_audio":
+            if audio_process:
+                audio_process.terminate(); audio_process.wait()
+                audio_process = None
 
-prev_lat = None
-prev_lon = None
-t = 0
-start_wall_time = time.time()
+    elif topic == "dock/dock1/flight":
+        action = payload.get("action", "")
+        log_command(action)
+        with state_lock:
+            _apply_flight_command(action, payload)
 
-FLIGHT_RADIUS_DEG = 0.0008
-BATTERY_DRAIN_MINUTES = 18.0
+def _apply_flight_command(action, payload):
+    phase = state["phase"]
+
+    if action == "takeoff":
+        if phase == "idle":
+            state["target_altitude"] = payload.get("altitude", 40.0)
+            state["active_speed"]    = float(payload.get("speed", CRUISE_SPEED))
+            state["phase"]           = "taking_off"
+            state["_pending"]        = None
+
+    elif action == "hold":
+        state["_pending"]     = None
+        state["active_decel"] = DECEL_RATE
+        state["target_lat"]   = state["lat"]
+        state["target_lon"]   = state["lon"]
+        state["phase"]        = "holding"
+
+    elif action == "fly_to":
+        state["_cancelled"] = False
+        tlat  = payload["lat"]
+        tlon  = payload["lon"]
+        speed = float(payload.get("speed", CRUISE_SPEED))
+        speed = max(0.5, min(speed, 20.0))
+        brg = geo_bearing(state["lat"], state["lon"], tlat, tlon)
+        state["target_lat"]     = tlat
+        state["target_lon"]     = tlon
+        state["active_bearing"] = brg
+        state["active_speed"]   = speed
+
+        if state["speed_mps"] <= STOP_THRESH:
+            state["_pending"] = None
+            state["phase"]    = "yawing_to"
+        else:
+            state["_pending"] = {"action": "fly_to", "lat": tlat, "lon": tlon, "speed": speed}
+            state["phase"]    = "holding"
+
+    elif action == "cancel_fly_to":
+        state["_pending"]              = None
+        state["_cancelled"]            = True
+        state["_pending_node_arrived"] = False
+        state["active_decel"]          = DECEL_RATE
+        if phase in ("flying_to", "yawing_to"):
+            state["target_lat"] = state["lat"]
+            state["target_lon"] = state["lon"]
+            state["phase"]      = "holding"
+
+    elif action == "rth":
+        state["_pending"]          = None
+        state["active_rth_speed"]  = float(payload.get("speed", CRUISE_SPEED))
+        state["active_rth_speed"]  = max(0.5, min(state["active_rth_speed"], 20.0))
+        if state["speed_mps"] <= STOP_THRESH:
+            _begin_rth_turn()
+        else:
+            state["_pending"] = {"action": "rth", "speed": state["active_rth_speed"]}
+            state["phase"]    = "holding"
+
+    elif action == "land":
+        state["_pending"]              = None
+        state["_cancelled"]            = True
+        state["_pending_node_arrived"] = False
+        state["active_bearing"]        = 0.0
+        state["phase"]                 = "rth_facing_home"
+
+    elif action == "manual_move":
+        if phase in ("holding", "manual_move"):
+            fwd   = payload.get("forward_m", 0.0)
+            right = payload.get("right_m",   0.0)
+            up    = payload.get("up_m",      0.0)
+            yaw   = payload.get("yaw_deg",   0.0)
+            speed = float(payload.get("speed", MANUAL_SPEED))
+            speed = max(0.5, min(speed, 20.0))
+            h_rad = math.radians(state["heading"])
+            north = fwd * math.cos(h_rad) - right * math.sin(h_rad)
+            east  = fwd * math.sin(h_rad) + right * math.cos(h_rad)
+            state["manual_north_remain"] += north
+            state["manual_east_remain"]  += east
+            state["manual_up_remain"]    += up
+            if yaw != 0.0:
+                state["heading"] = (state["heading"] + yaw) % 360
+            state["active_manual_speed"] = speed
+            has_displacement = abs(north) > 0.001 or abs(east) > 0.001 or abs(up) > 0.001
+            if phase != "manual_move" and has_displacement:
+                state["phase"] = "manual_move"
+
+def _begin_rth_turn():
+    dock_brg = geo_bearing(state["lat"], state["lon"], DOCK_LAT, DOCK_LON)
+    state["active_bearing"] = dock_brg
+    state["phase"]          = "rth_turning"
+
+def physics_tick(dt):
+    with state_lock:
+        phase = state["phase"]
+
+        t = state["wind_t"] + dt
+        state["wind_t"] = t
+        state["wind_speed_mps"]     = max(0.0, 3.5 + 1.5 * math.sin(t/40) + 0.3 * math.sin(t/7))
+        state["wind_direction_deg"] = (170 + 15 * math.sin(t/50) + 5 * math.sin(t/12)) % 360
+
+        is_at_dock = (state["altitude"] <= 0.05 and
+                      distance_m(state["lat"], state["lon"], DOCK_LAT, DOCK_LON) < 1.0)
+        on_ground  = state["altitude"] <= 0.05
+
+        if is_at_dock:
+            state["battery"] = min(100.0, state["battery"] + BATTERY_CHARGE * dt)
+            drain_per_min = BATTERY_DRAIN * 60
+            state["battery_min"] = state["battery"] / drain_per_min if drain_per_min > 0 else 0.0
+        elif not on_ground:
+            state["battery"] = max(0.0, state["battery"] - BATTERY_DRAIN * dt)
+            drain_per_min = BATTERY_DRAIN * 60
+            state["battery_min"] = state["battery"] / drain_per_min if drain_per_min > 0 else 0.0
+
+        if phase != "idle":
+            state["elapsed_seconds"] += dt
+
+        if phase == "idle":
+            state["speed_mps"]      = 0.0
+            state["vertical_speed"] = 0.0
+            state["pitch"]          = 0.0
+            state["roll"]           = 0.0
+
+        elif phase == "taking_off":
+            tgt   = state["target_altitude"]
+            climb = min(CLIMB_RATE * dt, max(0.0, tgt - state["altitude"]))
+            state["altitude"]       += climb
+            state["vertical_speed"]  = CLIMB_RATE
+            state["speed_mps"]       = step_toward(state["speed_mps"], 0.0, DECEL_RATE * dt)
+            state["pitch"]           = step_toward(state["pitch"], 5.0, 10.0 * dt)
+            state["roll"]            = step_toward(state["roll"],  0.0, 5.0  * dt)
+            if state["altitude"] >= tgt - 0.01:
+                state["altitude"]       = tgt
+                state["vertical_speed"] = 0.0
+                state["pitch"]          = step_toward(state["pitch"], 0.0, 5.0 * dt)
+                state["speed_mps"]      = 0.0
+                state["phase"]          = "holding"
+                state["_pending"]       = None
+                state["_takeoff_done"]  = True
+
+        elif phase == "holding":
+            state["speed_mps"] = step_toward(state["speed_mps"], 0.0, DECEL_RATE * dt)
+            if state["speed_mps"] < STOP_THRESH:
+                state["speed_mps"] = 0.0
+            state["vertical_speed"] = 0.0
+            state["pitch"]  = step_toward(state["pitch"], 0.0, 4.0 * dt)
+            state["roll"]   = step_toward(state["roll"],  0.0, 4.0 * dt)
+
+            if state["speed_mps"] <= STOP_THRESH:
+                if state.get("_pending_node_arrived") and not state.get("_cancelled", False):
+                    state["_pending_node_arrived"] = False
+                    state["_node_arrived"]          = True
+                elif state.get("_pending_node_arrived"):
+                    state["_pending_node_arrived"] = False
+                pending = state.get("_pending")
+                if pending:
+                    state["_pending"] = None
+                    _apply_flight_command(pending["action"], pending)
+
+        elif phase == "yawing_to":
+            state["speed_mps"] = step_toward(state["speed_mps"], 0.0, DECEL_RATE * dt)
+            if state["speed_mps"] < STOP_THRESH:
+                state["speed_mps"] = 0.0
+            state["vertical_speed"] = 0.0
+            state["pitch"] = step_toward(state["pitch"], 0.0, 4.0 * dt)
+            state["roll"]  = step_toward(state["roll"],  0.0, 4.0 * dt)
+            if state["speed_mps"] <= STOP_THRESH:
+                new_hdg = yaw_step(state["heading"], state["active_bearing"], dt)
+                state["heading"] = new_hdg
+                if state["heading"] == state["active_bearing"]:
+                    state["phase"] = "flying_to"
+
+        elif phase == "flying_to":
+            tgt_lat = state["target_lat"]
+            tgt_lon = state["target_lon"]
+            dist    = distance_m(state["lat"], state["lon"], tgt_lat, tgt_lon)
+
+            if dist <= ARRIVAL_THRESH:
+                state["lat"]           = tgt_lat
+                state["lon"]           = tgt_lon
+                state["phase"]     = "holding"
+                state["_pending"]  = None
+                if not state.get("_cancelled", False):
+                    state["_pending_node_arrived"] = True
+            else:
+                state["heading"]   = state["active_bearing"]
+                active_spd = state["active_speed"]
+                state["speed_mps"] = step_toward(state["speed_mps"], active_spd, ACCEL_RATE * dt)
+                spd   = state["speed_mps"]
+                ratio = min(spd * dt / max(dist, 0.001), 1.0)
+                state["lat"] += (tgt_lat - state["lat"]) * ratio
+                state["lon"] += (tgt_lon - state["lon"]) * ratio
+                state["pitch"] = step_toward(state["pitch"],
+                                             -min(spd / active_spd * 8.0, 8.0) if active_spd > 0 else 0.0, 3.0 * dt)
+                state["roll"]           = step_toward(state["roll"], 0.0, 3.0 * dt)
+                state["vertical_speed"] = 0.0
+
+        elif phase == "rth_turning":
+            state["speed_mps"] = step_toward(state["speed_mps"], 0.0, DECEL_RATE * dt)
+            if state["speed_mps"] < STOP_THRESH:
+                state["speed_mps"] = 0.0
+            state["vertical_speed"] = 0.0
+            state["pitch"] = step_toward(state["pitch"], 0.0, 4.0 * dt)
+            state["roll"]  = step_toward(state["roll"],  0.0, 4.0 * dt)
+            if state["speed_mps"] <= STOP_THRESH:
+                new_hdg = yaw_step(state["heading"], state["active_bearing"], dt)
+                state["heading"] = new_hdg
+                if state["heading"] == state["active_bearing"]:
+                    state["phase"] = "rth_flying"
+
+        elif phase == "rth_flying":
+            dist = distance_m(state["lat"], state["lon"], DOCK_LAT, DOCK_LON)
+
+            if dist <= ARRIVAL_THRESH:
+                state["lat"]            = DOCK_LAT
+                state["lon"]            = DOCK_LON
+                state["active_bearing"] = 0.0
+                state["phase"]          = "rth_facing_home"
+            else:
+                dock_brg = geo_bearing(state["lat"], state["lon"], DOCK_LAT, DOCK_LON)
+                state["heading"]   = dock_brg
+                rth_spd = state.get("active_rth_speed", CRUISE_SPEED)
+                state["speed_mps"] = step_toward(state["speed_mps"], rth_spd, ACCEL_RATE * dt)
+                spd   = state["speed_mps"]
+                ratio = min(spd * dt / max(dist, 0.001), 1.0)
+                state["lat"] += (DOCK_LAT - state["lat"]) * ratio
+                state["lon"] += (DOCK_LON - state["lon"]) * ratio
+                state["pitch"] = step_toward(state["pitch"],
+                                             -min(spd / rth_spd * 8.0, 8.0) if rth_spd > 0 else 0.0, 3.0 * dt)
+                state["roll"]           = step_toward(state["roll"], 0.0, 3.0 * dt)
+                state["vertical_speed"] = 0.0
+
+        elif phase == "rth_facing_home":
+            state["speed_mps"] = step_toward(state["speed_mps"], 0.0, DECEL_RATE * dt)
+            if state["speed_mps"] < STOP_THRESH:
+                state["speed_mps"] = 0.0
+            state["vertical_speed"] = 0.0
+            state["pitch"] = step_toward(state["pitch"], 0.0, 4.0 * dt)
+            state["roll"]  = step_toward(state["roll"],  0.0, 4.0 * dt)
+            if state["speed_mps"] <= STOP_THRESH:
+                new_hdg = yaw_step(state["heading"], 0.0, dt)
+                state["heading"] = new_hdg
+                if state["heading"] == 0.0:
+                    state["phase"] = "landing"
+
+        elif phase == "manual_move":
+            north_rem = state["manual_north_remain"]
+            east_rem  = state["manual_east_remain"]
+            up_rem    = state["manual_up_remain"]
+            total_horiz = math.sqrt(north_rem ** 2 + east_rem ** 2)
+
+            if abs(up_rem) > 0.01:
+                climb_rate = CLIMB_RATE if up_rem > 0 else DESCENT_RATE
+                v_step = min(climb_rate * dt, abs(up_rem))
+                state["altitude"] = max(0.0, state["altitude"] + math.copysign(v_step, up_rem))
+                state["manual_up_remain"] -= math.copysign(v_step, up_rem)
+                state["vertical_speed"]    = math.copysign(climb_rate, up_rem)
+            else:
+                state["manual_up_remain"] = 0.0
+                state["vertical_speed"]   = 0.0
+
+            if total_horiz <= 0.1:
+                state["manual_north_remain"] = 0.0
+                state["manual_east_remain"]  = 0.0
+                if abs(state["manual_up_remain"]) <= 0.01:
+                    state["phase"] = "holding"
+            else:
+                spd    = step_toward(state["speed_mps"], state.get("active_manual_speed", MANUAL_SPEED), ACCEL_RATE * dt)
+                step_m = min(spd * dt, total_horiz)
+                frac   = step_m / total_horiz
+                dn     = north_rem * frac
+                de     = east_rem  * frac
+                state["lat"], state["lon"] = move_by_metres(state["lat"], state["lon"], dn, de)
+                state["manual_north_remain"] -= dn
+                state["manual_east_remain"]  -= de
+                state["speed_mps"] = spd
+                ms = state.get("active_manual_speed", MANUAL_SPEED)
+                state["pitch"] = step_toward(state["pitch"],
+                                             -min(spd / ms * 5.0, 5.0) if ms > 0 else 0.0, 3.0 * dt)
+                state["roll"] = step_toward(state["roll"], 0.0, 3.0 * dt)
+
+        elif phase == "landing":
+            drop = min(DESCENT_RATE * dt, state["altitude"])
+            state["altitude"]       = max(0.0, state["altitude"] - drop)
+            state["vertical_speed"] = step_toward(state["vertical_speed"], -DESCENT_RATE, 2.0 * dt)
+            state["speed_mps"]      = step_toward(state["speed_mps"], 0.0, DECEL_RATE * dt)
+            state["pitch"]          = step_toward(state["pitch"], 2.0, 3.0 * dt)
+            state["roll"]           = step_toward(state["roll"],  0.0, 3.0 * dt)
+            if state["altitude"] <= 0.01:
+                state["altitude"]       = 0.0
+                state["vertical_speed"] = 0.0
+                state["speed_mps"]      = 0.0
+                state["pitch"]          = 0.0
+                state["roll"]           = 0.0
+                state["heading"]        = 0.0
+                state["phase"]          = "idle"
+                state["_landed"]        = True
+
+
+mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+mqtt_client.on_message = on_message
+mqtt_client.connect("localhost", 1883)
+mqtt_client.loop(timeout=0)
+mqtt_client.subscribe("dock/dock1/commands")
+mqtt_client.subscribe("dock/dock1/flight")
+mqtt_client.loop(timeout=0)
+
+_last_log_phase    = "idle"
+_last_pubbed_phase = "idle"
+_cmd_count         = 0
+_tick_count        = 0
+LOG_INTERVAL    = 80
+
+def log_command(action):
+    global _cmd_count
+    _cmd_count += 1
+
+def log_status():
+    global _last_log_phase, _last_pubbed_phase, _tick_count
+    with state_lock:
+        phase = state["phase"]
+    if phase != _last_log_phase:
+        print(f"[SIM] Phase: {_last_log_phase} -> {phase}")
+        _last_log_phase = phase
+
+last_tick = time.time()
+_tick_count = 0
 
 while True:
-    altitude = 40.0 + 10.0 * math.sin(t / 14)
-    vertical_speed = round(10.0 * math.cos(t / 14) * (1.0 / 14.0), 2)
+    mqtt_client.loop(timeout=0)
 
-    speed_target = 7.5 + 2.5 * math.sin(t / 10)
+    now = time.time()
+    dt  = min(now - last_tick, 0.2)
+    last_tick = now
+    _tick_count += 1
 
-    # slightly more accurate roll, didn't use in pres due to larger variations in alt etc.
-    # omega = (1.0 / 20.0)
-    # roll  = round(math.degrees(math.atan((speed_target * omega) / 9.81)), 2)
+    physics_tick(dt)
+    log_status()
 
-    # gentle drift stays near centre
-    roll = round(1.0 * math.sin(t / 6.0) + 0.5 * math.sin(t / 2.1), 2)
+    events = {}
+    with state_lock:
+        for key in ("_node_arrived", "_takeoff_done", "_landed"):
+            if state.get(key):
+                events[key] = True
+                del state[key]
 
-    # slightly more accurate pitch, didn't use in pres due to larger variations in alt etc.
-    # cruise_pitch = -math.degrees(math.atan(speed_target / 9.81)) * 0.20
-    # climb_pitch  = math.atan2(vertical_speed, speed_target) * (180.0 / math.pi)
-    # pitch = round(cruise_pitch + climb_pitch, 2)
-
-    # gentle drift stays near centre
-    pitch = round(1.0 * math.sin(t / 6.0) + 0.5 * math.sin(t / 2.1), 2)
-
-    lat = START_LAT + FLIGHT_RADIUS_DEG * math.sin(t / 20)
-    lon = START_LON + FLIGHT_RADIUS_DEG * math.cos(t / 20)
-
-    elapsed_seconds = int(time.time() - start_wall_time)
-    elapsed_str = "{:02d}:{:02d}:{:02d}".format(
-        elapsed_seconds // 3600,
-        (elapsed_seconds % 3600) // 60,
-        elapsed_seconds % 60
-    )
-
-    elapsed_minutes = elapsed_seconds / 60.0
-    battery = max(0.0, 100.0 - elapsed_minutes * (100.0 / BATTERY_DRAIN_MINUTES))
-    battery_min = max(0.0, battery / (100.0 / BATTERY_DRAIN_MINUTES))
-
-    wind_speed = 3.5 + 1.5 * math.sin(t / 40) + 0.3 * math.sin(t / 7)
-    wind_speed = max(0.0, wind_speed)
-    wind_direction = (170 + 15 * math.sin(t / 50) + 5 * math.sin(t / 12)) % 360
-
-    if prev_lat is not None and prev_lon is not None:
-        dLon = math.radians(lon - prev_lon)
-        lat1 = math.radians(prev_lat)
-        lat2 = math.radians(lat)
-
-        x = math.sin(dLon) * math.cos(lat2)
-        y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dLon)
-        heading = (math.degrees(math.atan2(x, y)) + 360) % 360
-
-        R = 6371000
-        dLat = math.radians(lat - prev_lat)
-        a = math.sin(dLat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dLon / 2) ** 2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        raw_speed = (R * c) / 0.1
-
-        speed = speed_target
-    else:
-        heading = 0
-        speed = 0
-
-    telemetry = {
-        "lat": round(lat, 6),
-        "lon": round(lon, 6),
-        "altitude": round(altitude, 2),
-        "vertical_speed": vertical_speed,
-        "battery": round(battery, 2),
-        "heading": round(heading, 2),
-        "pitch": pitch,
-        "roll":  roll,
-        "speed_mps": round(speed, 2),
-        "wind_speed_mps": round(wind_speed, 2),
-        "wind_direction_deg": round(wind_direction, 2),
-        "battery_min": round(battery_min, 2),
-        "time_elapsed": elapsed_str
+    event_map = {
+        "_node_arrived": "node_arrived",
+        "_takeoff_done": "takeoff_done",
+        "_landed":       "landed",
     }
+    for key in events:
+        mqtt_client.publish("dock/dock1/flight_status",
+                            json.dumps({"event": event_map[key]}))
 
-    client.publish(
-        "dock/dock1/drone/telemetry",
-        json.dumps(telemetry)
-    )
+    with state_lock:
+        cur_phase = state["phase"]
+    if cur_phase != _last_pubbed_phase:
+        _last_pubbed_phase = cur_phase
+        mqtt_client.publish("dock/dock1/flight_status",
+                            json.dumps({"event": "phase_changed", "phase": cur_phase}))
+        print(f"[SIM] -> phase_changed: {cur_phase}")
 
-    prev_lat = lat
-    prev_lon = lon
+    if _tick_count % PUBLISH_EVERY == 0:
+        with state_lock:
+            elapsed = int(state["elapsed_seconds"])
+            elapsed_str = "{:02d}:{:02d}:{:02d}".format(
+                elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
+            )
+            telemetry = {
+                "lat":                round(state["lat"],       6),
+                "lon":                round(state["lon"],       6),
+                "altitude":           round(state["altitude"],  2),
+                "vertical_speed":     round(state["vertical_speed"], 2),
+                "heading":            round(state["heading"],   2),
+                "pitch":              round(state["pitch"],     2),
+                "roll":               round(state["roll"],      2),
+                "speed_mps":          round(state["speed_mps"], 2),
+                "wind_speed_mps":     round(state["wind_speed_mps"], 2),
+                "wind_direction_deg": round(state["wind_direction_deg"], 2),
+                "battery":            round(state["battery"],   2),
+                "battery_min":        round(state["battery_min"], 2),
+                "time_elapsed":       elapsed_str,
+                "phase":              state["phase"],
+            }
+        mqtt_client.publish("dock/dock1/drone/telemetry", json.dumps(telemetry))
 
-    t += 0.1
-    time.sleep(0.1)
+    mqtt_client.loop(timeout=0)
+    time.sleep(TICK)
