@@ -13,8 +13,11 @@ RESET='\033[0m'
 # Change to proper locaton of folder
 REPO="/Users/adw/Documents/GitHub/DroneLiveStreamDemo"
 
-# your Mac's LAN IP - Vision Pro must use this, not localhost
+# Your Mac's LAN IP — the Vision Pro must use this to reach the stream.
+# Exported as STREAM_HOST so both dock_sim.py and api_sim.js pick it up
+# automatically without any hardcoding in those files.
 MAC_IP="YOUR IP GOES HERE"
+export STREAM_HOST="$MAC_IP"
 
 cleanup() {
     echo -e "\n${BOLD}Shutting down...${RESET}"
@@ -74,19 +77,5 @@ API_PID=$!
 sleep 1
 
 echo -e "\n${BOLD}All services running.${RESET} ${DIM}Ctrl+C to stop.${RESET}\n"
-
-# auto-start livestream
-sleep 2
-echo -e "${MAGENTA}[stream]${RESET} Starting livestream..."
-STREAM_RESPONSE=$(curl -s -X POST http://localhost:3000/livestream/start)
-echo -e "${MAGENTA}[stream]${RESET} ${STREAM_RESPONSE}"
-
-# override stream_status with the correct LAN IP so Vision Pro can reach it
-# the API sim publishes localhost which the headset can't resolve
-sleep 2
-mosquitto_pub -h localhost -t dock/dock1/stream_status \
-    -m "{\"status\":\"streaming\",\"stream_url\":\"http://${MAC_IP}:8888/dock1_stream/index.m3u8\"}" \
-    -r
-echo -e "${MAGENTA}[stream]${RESET} Corrected stream_url published -> http://${MAC_IP}:8888/dock1_stream/index.m3u8"
 
 wait

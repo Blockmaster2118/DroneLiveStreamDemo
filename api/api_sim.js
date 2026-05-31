@@ -3,6 +3,10 @@ const mqtt = require("mqtt")
 
 const app = express()
 
+// STREAM_HOST is the address clients use to reach the HLS/RTSP streams.
+// Falls back to localhost for local testing without the launcher.
+const STREAM_HOST = process.env.STREAM_HOST || "localhost"
+
 const client = mqtt.connect("mqtt://localhost:1883")
 
 client.on("connect", () => {
@@ -15,7 +19,7 @@ app.post("/livestream/start", (req, res) => {
         "dock/dock1/commands",
         JSON.stringify({ action: "start_stream" })
     )
-    res.json({ stream_url: "rtsp://localhost:8554/dock1_stream" })
+    res.json({ stream_url: `http://${STREAM_HOST}:8888/dock1_stream/index.m3u8` })
 })
 
 // publish stop_stream to the dock
@@ -33,7 +37,7 @@ app.post("/audio/start", (req, res) => {
         "dock/dock1/commands",
         JSON.stringify({ action: "start_audio" })
     )
-    res.json({ stream_url: "rtsp://localhost:8554/dock1_audio" })
+    res.json({ stream_url: `rtsp://${STREAM_HOST}:8554/dock1_audio` })
 })
 
 // publish stop_audio to the dock

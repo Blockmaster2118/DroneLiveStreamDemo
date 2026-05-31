@@ -12,6 +12,11 @@ _local_ffmpeg = os.path.join(PROJECT_ROOT, "bin", "ffmpeg")
 ffmpeg_path = _local_ffmpeg if os.path.isfile(_local_ffmpeg) else "ffmpeg"
 video_path  = os.path.join(PROJECT_ROOT, "media", "drone_test.mp4")
 
+# STREAM_HOST is the address clients use to reach the HLS stream.
+# Set to the Mac's LAN IP via the launcher so remote devices (e.g. Vision Pro)
+# can resolve it. Falls back to localhost for local testing without the launcher.
+STREAM_HOST = os.environ.get("STREAM_HOST", "localhost")
+
 stream_process = None
 audio_process  = None
 
@@ -154,7 +159,7 @@ def handle_stream_command(client, payload):
         client.publish(
             "dock/dock1/stream_status",
             json.dumps({"status": "streaming",
-                        "stream_url": "http://localhost:8888/dock1_stream/index.m3u8"}),
+                        "stream_url": f"http://{STREAM_HOST}:8888/dock1_stream/index.m3u8"}),
             retain=True
         )
 
