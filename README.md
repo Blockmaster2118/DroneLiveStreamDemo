@@ -1,251 +1,264 @@
 # DJI Dock Simulation Environment
 
-This project simulates a simplified version of a **DJI Dock style drone system** using MQTT telemetry, an API interface, and RTSP video streaming.
+This project simulates a simplified **DJI Dock-style drone platform** using MQTT, a REST API interface, a realistic flight model, and livestreaming services.
 
-The simulator demonstrates how a backend system can control a remote drone dock, start a livestream, and receive telemetry data.
+The simulator demonstrates how a backend system can:
 
-The architecture loosely mirrors the behaviour of systems controlled through the DJI Cloud API.
+- Control a remote drone dock
+- Launch and stop livestreams
+- Execute flight commands
+- Monitor telemetry in real time
+- Track mission state changes
+- Simulate battery consumption and charging
+
+The architecture loosely mirrors systems controlled through the DJI Cloud API.
 
 ---
 
 # Architecture
 
-```
-Client/API Request
-↓
+```text
+Client / API Request
+        ↓
 Node.js API Server
-↓
-MQTT Command
-↓
+        ↓
+MQTT Commands
+        ↓
 Dock Simulator (Python)
-↓
-├── FFmpeg Video Stream
-├── FFmpeg Audio Stream
-↓
-MediaMTX RTSP Server
-↓
-RTSP Viewer (VLC etc.)
+        ├── Flight Controller Simulation
+        ├── Telemetry Publisher
+        ├── Battery & Wind Simulation
+        ├── FFmpeg Video Stream
+        └── FFmpeg Audio Stream
+        ↓
+MediaMTX
+        ↓
+HLS / RTSP Stream
+        ↓
+Client Viewer
+(VLC, Browser, Apple Vision Pro, etc.)
 ```
-
-The dock simulator publishes telemetry data and listens for commands to start or stop the video stream.
 
 ---
 
+# Features
+
+### Livestream Simulation
+
+- Video streaming via FFmpeg
+- Audio streaming via FFmpeg
+- RTSP distribution through MediaMTX
+- HLS playback support
+- Stream status published via MQTT
+
+### Flight Simulation
+
+- Takeoff
+- Fly-to waypoint
+- Hold position
+- Manual movement
+- Return-to-home (RTH)
+- Landing
+
+### Telemetry Simulation
+
+- GPS position
+- Altitude
+- Heading
+- Horizontal speed
+- Vertical speed
+- Pitch
+- Roll
+- Wind speed
+- Wind direction
+- Battery percentage
+- Estimated remaining flight time
+- Flight phase
+- Mission elapsed time
+
+### Event Notifications
+
+Flight events are published automatically:
+
+- Takeoff complete
+- Waypoint reached
+- Landing complete
+- Flight phase changes
+
+---
 
 # Project Components
 
 | File | Description |
-|-----|-------------|
-| `api_sim.js` | Simulated API server that sends commands via MQTT |
-| `dock_sim.py` | Simulated dock that publishes telemetry and launches FFmpeg |
-| `drone_test.mp4` | Sample drone video used for the livestream |
-| `radio_test.mp3` | Sample audio used for simulated radio feed |
-| `mediamtx.exe` | RTSP server used to distribute streams |
-| `ffmpeg.exe` | Used to push video/audio streams |
-| `telemetry_viewer.py` | CLI dashboard for real-time telemetry |
+|--------|-------------|
+| `api_sim.js` | Simulated API server |
+| `dock_sim.py` | Drone dock and flight simulator |
+| `telemetry_viewer.py` | Real-time telemetry dashboard |
+| `drone_test.mp4` | Sample drone video |
+| `radio_test.mp3` | Sample radio/audio feed |
+| `mediamtx` | Media streaming server |
+| `ffmpeg` | Video/audio streaming engine |
 
 ---
 
-## Folder Structure
+# MQTT Topics
 
-- `/api/` → Node.js API simulator
-- `/dock/` → Python dock simulator
-- `/media/` → Sample video files
-- `/bin/` → FFmpeg and MediaMTX binaries
-- `/display/` → Telemetry viewer and tools
+## Telemetry
 
-# Dependencies
+Published continuously:
 
-The following software must be installed:
-
-## 1. Node.js
-
-Required to run the API server.
-
-https://nodejs.org/
-
-Verify installation:
-
-```
-node -v
-npm -v
-```
-
-Install required packages:
-
-```
-npm install express mqtt
-```
-
----
-
-## 2. Python 3
-
-Required for the dock simulator.
-
-https://www.python.org/
-
-Install required Python package:
-
-```
-pip install paho-mqtt
-```
-
----
-
-## 3. MQTT Broker
-
-This project uses **Mosquitto**.
-
-https://mosquitto.org/download/
-
-Start the broker:
-
-```
-mosquitto
-```
-
----
-
-## 4. FFmpeg
-
-Used to stream the simulated drone video.
-
-https://ffmpeg.org/download.html
-
-Place `ffmpeg.exe` in the project directory or add it to your system PATH.
-
----
-
-## 5. MediaMTX (RTSP Server)
-
-Used to distribute the livestream.
-
-https://github.com/bluenviron/mediamtx
-
-Start the server:
-
-```
-mediamtx
-```
-
----
-
-# Starting the Simulation
-
-Start each component in separate terminals.
-
----
-
-## 1. Start MQTT Broker
-
-```
-mosquitto
-```
-
----
-
-## 2. Start MediaMTX
-
-```
-mediamtx
-```
-
----
-
-## 3. Start Dock Simulator
-
-```
-python dock_sim.py
-```
-
-The dock simulator will begin publishing telemetry data.
-
----
-
-## 4. Start API Server
-
-```
-node api_sim.js
-```
-
----
-
-# Starting the Livestream
-
-Send a request to the API:
-
-```
-POST http://localhost:3000/livestream/start
-```
-
-Example using curl:
-
-```
-curl -X POST http://localhost:3000/livestream/start
-```
-
-The API will trigger the dock simulator to start streaming.
-
-Use _audio/_ for radio feed.
-
----
-
-# Viewing the Stream
-
-Open the stream in VLC or another RTSP client:
-
-## Video Stream
-
-```
-rtsp://localhost:8554/dock1_stream
-```
-
-## Audio Stream
-
-```
-rtsp://localhost:8554/dock1_audio
-```
-
----
-
-# Telemetry 
-
-Telemetry is published via MQTT on:
-
-```
+```text
 dock/dock1/drone/telemetry
 ```
 
-Use display/telemetry_viewer.py for easier visual:
-
-```
-python telemetry_viewer.py
-```
-
-Example telemetry message:
+Example:
 
 ```json
 {
-  "lat": -33.86,
-  "lon": 151.20,
-  "altitude": 60,
-  "battery": 85
+  "lat": -33.560000,
+  "lon": 148.955000,
+  "altitude": 40.0,
+  "heading": 180.0,
+  "speed_mps": 8.0,
+  "battery": 82.4,
+  "phase": "flying_to"
 }
 ```
-Update rate: _~100ms (10Hz)_
+
+Update rate:
+
+```text
+~20 Hz
+```
 
 ---
 
-# Commands _(Currently Unimplemented)_
+## Flight Commands
 
-Commands are received on:
+Commands are sent to:
 
+```text
+dock/dock1/flight
 ```
+
+### Takeoff
+
+```json
+{
+  "action": "takeoff",
+  "altitude": 40
+}
+```
+
+### Fly To Coordinate
+
+```json
+{
+  "action": "fly_to",
+  "lat": -33.561,
+  "lon": 148.956,
+  "speed": 8
+}
+```
+
+### Hold Position
+
+```json
+{
+  "action": "hold"
+}
+```
+
+### Manual Move
+
+```json
+{
+  "action": "manual_move",
+  "forward_m": 10,
+  "right_m": 0,
+  "up_m": 0,
+  "yaw_deg": 0
+}
+```
+
+### Return To Home
+
+```json
+{
+  "action": "rth"
+}
+```
+
+### Land
+
+```json
+{
+  "action": "land"
+}
+```
+
+### Cancel Active Navigation
+
+```json
+{
+  "action": "cancel_fly_to"
+}
+```
+
+---
+
+## Flight Status Events
+
+Published on:
+
+```text
+dock/dock1/flight_status
+```
+
+### Phase Change
+
+```json
+{
+  "event": "phase_changed",
+  "phase": "flying_to"
+}
+```
+
+### Takeoff Complete
+
+```json
+{
+  "event": "takeoff_done"
+}
+```
+
+### Waypoint Reached
+
+```json
+{
+  "event": "node_arrived"
+}
+```
+
+### Landing Complete
+
+```json
+{
+  "event": "landed"
+}
+```
+
+---
+
+## Stream Control Commands
+
+Published to:
+
+```text
 dock/dock1/commands
 ```
 
-Example command:
+### Start Video Stream
 
 ```json
 {
@@ -253,13 +266,109 @@ Example command:
 }
 ```
 
+### Stop Video Stream
+
+```json
+{
+  "action": "stop_stream"
+}
+```
+
+### Start Audio Stream
+
+```json
+{
+  "action": "start_audio"
+}
+```
+
+### Stop Audio Stream
+
+```json
+{
+  "action": "stop_audio"
+}
+```
+
+---
+
+## Stream Status
+
+Published on:
+
+```text
+dock/dock1/stream_status
+```
+
+Example:
+
+```json
+{
+  "status": "streaming",
+  "stream_url": "http://192.168.1.100:8888/dock1_stream/index.m3u8"
+}
+```
+
+---
+
+# Viewing the Stream
+
+## HLS Stream
+
+Recommended for browser-based clients and Apple Vision Pro:
+
+```text
+http://<host-ip>:8888/dock1_stream/index.m3u8
+```
+
+## RTSP Video
+
+```text
+rtsp://localhost:8554/dock1_stream
+```
+
+## RTSP Audio
+
+```text
+rtsp://localhost:8554/dock1_audio
+```
+
+---
+
+# Simulated Flight Model
+
+The simulator includes:
+
+- Smooth acceleration and deceleration
+- Heading/yaw transitions
+- Climb and descent rates
+- Return-to-home behaviour
+- Battery discharge while flying
+- Battery charging while docked
+- Dynamic wind conditions
+- Mission timer tracking
+
+Flight phases:
+
+```text
+idle
+taking_off
+holding
+yawing_to
+flying_to
+manual_move
+rth_turning
+rth_flying
+rth_facing_home
+landing
+```
+
 ---
 
 # Notes
 
-- This is a **simulation environment** and does not interact with real drone hardware.
-- The implementation demonstrates the core architecture used in dock-controlled drone systems.
-- Demo latency will depend on local network conditions and RTSP client buffering.
-
----
-# DroneLiveStreamDemo
+- This is a simulation environment and does not interact with real DJI hardware.
+- Flight behaviour is intentionally simplified but follows realistic operational concepts.
+- Stream URLs are published automatically through MQTT when streaming starts.
+- The simulator can be used as a backend test environment for cloud-controlled drone applications.
+- HLS streaming is recommended for remote clients and browser-based viewing.
