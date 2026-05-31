@@ -13,8 +13,7 @@ ffmpeg_path = _local_ffmpeg if os.path.isfile(_local_ffmpeg) else "ffmpeg"
 video_path  = os.path.join(PROJECT_ROOT, "media", "drone_test.mp4")
 
 # STREAM_HOST is the address clients use to reach the HLS stream.
-# Set to the Mac's LAN IP via the launcher so remote devices (e.g. Vision Pro)
-# can resolve it. Falls back to localhost for local testing without the launcher.
+# Falls back to localhost for local testing without the launcher.
 STREAM_HOST = os.environ.get("STREAM_HOST", "localhost")
 
 stream_process = None
@@ -284,7 +283,7 @@ def _begin_rth_turn():
     state["phase"]          = "rth_turning"
 
 # ---------------------------------------------------------------------------
-# Physics tick — one function per flight phase
+# Physics tick:  one function per flight phase
 # ---------------------------------------------------------------------------
 
 def _tick_environment(dt):
