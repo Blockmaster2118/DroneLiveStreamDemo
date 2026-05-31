@@ -36,7 +36,6 @@ MediaMTX
 HLS / RTSP Stream
         ↓
 Client Viewer
-(VLC, Browser, Apple Vision Pro, etc.)
 ```
 
 ---
